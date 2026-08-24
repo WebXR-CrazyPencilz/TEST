@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>GLB Top View</title>
+
+  <!-- THREE.JS IMPORT MAP -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #eeeeee;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Loading */
+
+    #loading {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+
+      padding: 10px 16px;
+
+      background: rgba(0, 0, 0, 0.75);
+      color: white;
+
+      border-radius: 6px;
+
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+
+      z-index: 10;
+    }
+
+    /* Error */
+
+    #error {
+      display: none;
+
+      position: fixed;
+      top: 20px;
+      left: 20px;
+
+      padding: 15px;
+
+      max-width: 500px;
+
+      background: #ffdddd;
+      color: #990000;
+
+      border: 1px solid #ff9999;
+      border-radius: 6px;
+
+      font-family: Arial, sans-serif;
+
+      z-index: 20;
+    }
+
+  </style>
+
+</head>
+
+
+<body>
+
+
+  <!-- LOADING MESSAGE -->
+
+  <div id="loading">
+    Loading GLB...
+  </div>
+
+
+  <!-- ERROR MESSAGE -->
+
+  <div id="error"></div>
+
+
+  <script type="module">
+
+
+    // =====================================================
+    // IMPORT THREE.JS
+    // =====================================================
+
+    import * as THREE from "three";
+
+    import {
+      OrbitControls
+    } from "three/addons/controls/OrbitControls.js";
+
+    import {
+      GLTFLoader
+    } from "three/addons/loaders/GLTFLoader.js";
+
+
+    // =====================================================
+    // SCENE
+    // =====================================================
+
+    const scene = new THREE.Scene();
+
+    scene.background =
+      new THREE.Color(0xeeeeee);
+
+
+    // =====================================================
+    // CAMERA
+    // =====================================================
+
+    const camera =
+      new THREE.PerspectiveCamera(
+
+        45,
+
+        window.innerWidth /
+        window.innerHeight,
+
+        0.01,
+
+        10000
+
+      );
+
+
+    // Initial camera position.
+    // It will be changed automatically
+    // after the GLB loads.
+
+    camera.position.set(
+      0,
+      10,
+      0
+    );
+
+
+    camera.lookAt(
+      0,
+      0,
+      0
+    );
+
+
+    // =====================================================
+    // RENDERER
+    // =====================================================
+
+    const renderer =
+      new THREE.WebGLRenderer({
+
+        antialias: true
+
+      });
+
+
+    renderer.setSize(
+
+      window.innerWidth,
+
+      window.innerHeight
+
+    );
+
+
+    renderer.setPixelRatio(
+
+      Math.min(
+        window.devicePixelRatio,
+        2
+      )
+
+    );
+
+
+    renderer.outputColorSpace =
+      THREE.SRGBColorSpace;
+
+
+    renderer.shadowMap.enabled =
+      true;
+
+
+    renderer.shadowMap.type =
+      THREE.PCFSoftShadowMap;
+
+
+    document.body.appendChild(
+      renderer.domElement
+    );
+
+
+    // =====================================================
+    // LIGHTING
+    // =====================================================
+
+    const hemisphereLight =
+      new THREE.HemisphereLight(
+
+        0xffffff,
+        0x444444,
+        3
+
+      );
+
+
+    scene.add(
+      hemisphereLight
+    );
+
+
+    const mainLight =
+      new THREE.DirectionalLight(
+
+        0xffffff,
+        4
+
+      );
+
+
+    mainLight.position.set(
+
+      10,
+      20,
+      10
+
+    );
+
+
+    mainLight.castShadow =
+      true;
+
+
+    scene.add(
+      mainLight
+    );
+
+
+    const fillLight =
+      new THREE.DirectionalLight(
+
+        0xffffff,
+        2
+
+      );
+
+
+    fillLight.position.set(
+
+      -10,
+      10,
+      -10
+
+    );
+
+
+    scene.add(
+      fillLight
+    );
+
+
+    // =====================================================
+    // ORBIT CONTROLS
+    // =====================================================
+
+    const controls =
+      new OrbitControls(
+
+        camera,
+
+        renderer.domElement
+
+      );
+
+
+    controls.enableDamping =
+      true;
+
+
+    controls.dampingFactor =
+      0.05;
+
+
+    controls.enablePan =
+      true;
+
+
+    controls.enableZoom =
+      true;
+
+
+    controls.minDistance =
+      0.1;
+
+
+    controls.maxDistance =
+      10000;
+
+
+    // =====================================================
+    // GLTF / GLB LOADER
+    // =====================================================
+
+    const loader =
+      new GLTFLoader();
+
+
+    loader.load(
+
+      "./test.glb",
+
+
+      // ===================================================
+      // GLB LOADED
+      // ===================================================
+
+      function (gltf) {
+
+
+        console.log(
+          "================================"
+        );
+
+        console.log(
+          "GLB LOADED SUCCESSFULLY"
+        );
+
+        console.log(
+          "================================"
+        );
+
+
+        const model =
+          gltf.scene;
+
+
+        scene.add(
+          model
+        );
+
+
+        // =================================================
+        // ENABLE SHADOWS
+        // =================================================
+
+        model.traverse(
+
+          function (object) {
+
+
+            if (
+              object.isMesh
+            ) {
+
+
+              object.castShadow =
+                true;
+
+
+              object.receiveShadow =
+                true;
+
+
+            }
+
+
+          }
+
+        );
+
+
+        // =================================================
+        // FIND MODEL BOUNDS
+        // =================================================
+
+        const box =
+          new THREE.Box3();
+
+
+        box.setFromObject(
+          model
+        );
+
+
+        const center =
+          box.getCenter(
+
+            new THREE.Vector3()
+
+          );
+
+
+        const size =
+          box.getSize(
+
+            new THREE.Vector3()
+
+          );
+
+
+        console.log(
+          "Original model size:",
+          size
+        );
+
+
+        console.log(
+          "Original model center:",
+          center
+        );
+
+
+        // =================================================
+        // CENTER MODEL
+        // =================================================
+
+        model.position.x =
+          model.position.x -
+          center.x;
+
+
+        model.position.y =
+          model.position.y -
+          center.y;
+
+
+        model.position.z =
+          model.position.z -
+          center.z;
+
+
+        // =================================================
+        // CALCULATE CENTERED BOUNDS
+        // =================================================
+
+        const centeredBox =
+          new THREE.Box3();
+
+
+        centeredBox.setFromObject(
+          model
+        );
+
+
+        const centeredSize =
+          centeredBox.getSize(
+
+            new THREE.Vector3()
+
+          );
+
+
+        console.log(
+          "Centered model size:",
+          centeredSize
+        );
+
+
+        // =================================================
+        // FIND LARGEST DIMENSION
+        // =================================================
+
+        const maxSize =
+          Math.max(
+
+            centeredSize.x,
+
+            centeredSize.y,
+
+            centeredSize.z
+
+          );
+
+
+        console.log(
+          "Maximum dimension:",
+          maxSize
+        );
+
+
+        // =================================================
+        // CALCULATE CAMERA DISTANCE
+        // =================================================
+
+        const fovRadians =
+          THREE.MathUtils.degToRad(
+
+            camera.fov
+
+          );
+
+
+        let distance =
+          (
+            maxSize / 2
+          ) /
+          Math.tan(
+
+            fovRadians / 2
+
+          );
+
+
+        // Extra space around model
+
+        distance =
+          distance * 1.25;
+
+
+        console.log(
+          "Camera distance:",
+          distance
+        );
+
+
+        // =================================================
+        // TOP VIEW
+        // =================================================
+
+        camera.position.set(
+
+          0,
+
+          distance,
+
+          0
+
+        );
+
+
+        camera.lookAt(
+
+          0,
+          0,
+          0
+
+        );
+
+
+        // =================================================
+        // ORBIT TARGET
+        // =================================================
+
+        controls.target.set(
+
+          0,
+          0,
+          0
+
+        );
+
+
+        controls.update();
+
+
+        // =================================================
+        // HIDE LOADING MESSAGE
+        // =================================================
+
+        document.getElementById(
+          "loading"
+        ).style.display =
+          "none";
+
+
+        // =================================================
+        // ANIMATIONS
+        // =================================================
+
+        if (
+          gltf.animations &&
+          gltf.animations.length > 0
+        ) {
+
+
+          console.log(
+            "Animations found:",
+            gltf.animations.length
+          );
+
+
+          gltf.animations.forEach(
+
+            function (animation) {
+
+              console.log(
+                "Animation:",
+                animation.name
+              );
+
+            }
+
+          );
+
+
+        }
+        else {
+
+
+          console.log(
+            "No animations found."
+          );
+
+
+        }
+
+
+      },
+
+
+      // ===================================================
+      // LOADING PROGRESS
+      // ===================================================
+
+      function (xhr) {
+
+
+        if (
+          xhr.total > 0
+        ) {
+
+
+          const percent =
+
+            (
+              xhr.loaded /
+              xhr.total
+            ) * 100;
+
+
+          document.getElementById(
+            "loading"
+          ).innerText =
+
+            "Loading GLB... " +
+
+            percent.toFixed(0) +
+
+            "%";
+
+
+          console.log(
+
+            "Loading:",
+
+            percent.toFixed(0) +
+
+            "%"
+
+          );
+
+
+        }
+
+
+      },
+
+
+      // ===================================================
+      // ERROR
+      // ===================================================
+
+      function (error) {
+
+
+        console.error(
+          "================================"
+        );
+
+
+        console.error(
+          "GLB LOAD ERROR"
+        );
+
+
+        console.error(
+          error
+        );
+
+
+        console.error(
+          "================================"
+        );
+
+
+        document.getElementById(
+          "loading"
+        ).style.display =
+          "none";
+
+
+        const errorBox =
+          document.getElementById(
+            "error"
+          );
+
+
+        errorBox.style.display =
+          "block";
+
+
+        errorBox.innerHTML =
+
+          "<strong>Unable to load test.glb</strong><br><br>" +
+
+          "Open F12 → Console to see the exact error.";
+
+
+      }
+
+    );
+
+
+    // =====================================================
+    // WINDOW RESIZE
+    // =====================================================
+
+    window.addEventListener(
+
+      "resize",
+
+      function () {
+
+
+        camera.aspect =
+
+          window.innerWidth /
+          window.innerHeight;
+
+
+        camera.updateProjectionMatrix();
+
+
+        renderer.setSize(
+
+          window.innerWidth,
+
+          window.innerHeight
+
+        );
+
+
+      }
+
+    );
+
+
+    // =====================================================
+    // RENDER LOOP
+    // =====================================================
+
+    function animate() {
+
+
+      requestAnimationFrame(
+        animate
+      );
+
+
+      controls.update();
+
+
+      renderer.render(
+
+        scene,
+
+        camera
+
+      );
+
+
+    }
+
+
+    animate();
+
+
+  </script>
+
+
+</body>
+
+</html>
