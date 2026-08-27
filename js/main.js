@@ -27,7 +27,7 @@ const cameraDebugEl = document.getElementById("camera-debug");
 // =====================================================================
 
 // ---------------------------------------------------------------------
-// POINT A — THE ONLY STARTING CAMERA POSITION. UNCHANGED.
+// POINT A — hand-tuned camera position. Independent of Point B.
 // ---------------------------------------------------------------------
 const POINT_A = new THREE.Vector3(
   -191.31,
@@ -36,9 +36,8 @@ const POINT_A = new THREE.Vector3(
 );
 
 // ---------------------------------------------------------------------
-// POINT B — ORBIT CENTER (NOT a camera position). UNTOUCHED.
-// The camera never sits here, never passes through it, and never
-// interpolates its position toward it.
+// POINT B — ORBIT CENTER (NOT a camera position). The camera never
+// sits here, never passes through it, never interpolates toward it.
 // ---------------------------------------------------------------------
 const POINT_B = new THREE.Vector3(
   139.22,
@@ -47,7 +46,7 @@ const POINT_B = new THREE.Vector3(
 );
 
 // ---------------------------------------------------------------------
-// POINT C — FINAL TOP VIEW CAMERA POSITION. UNCHANGED.
+// POINT C — FINAL TOP VIEW CAMERA POSITION.
 // ---------------------------------------------------------------------
 const POINT_C = new THREE.Vector3(
   0,
@@ -56,7 +55,9 @@ const POINT_C = new THREE.Vector3(
 );
 
 // =====================================================================
-// POINT A ROTATION — the left-facing opening composition. UNCHANGED.
+// POINT A ROTATION — hand-tuned, independent of Point B. This is
+// Point A's own composition and is never derived from, or blended
+// toward, anything Point-B-related except across the approach.
 // =====================================================================
 
 const POINT_A_YAW_DEG = -20;    // turn left
@@ -64,7 +65,7 @@ const POINT_A_PITCH_DEG = -15;  // tilt down
 const POINT_A_ROLL_DEG = 0;     // level horizon
 
 // =====================================================================
-// ORBIT SETTINGS — Code 1's exact values. DO NOT CHANGE.
+// ORBIT SETTINGS — Point B's own geometry. DO NOT CHANGE.
 // =====================================================================
 
 const ORBIT_RADIUS = 20;
@@ -78,7 +79,7 @@ const ORBIT_HEIGHT_OFFSET = 4;
 
 const HOLD_AT_A_DURATION = 1.5;       // pause at Point A before moving
 const APPROACH_DURATION = 7.0;        // Point A -> orbit entry, very slow
-const ORBIT_DURATION = 3.5;           // circular orbit around Point B — UNTOUCHED
+const ORBIT_DURATION = 3.5;           // circular orbit around Point B
 const TOP_TRANSITION_DURATION = 5.0;  // orbit -> Point C, very slow rise
 
 // ---------------------------------------------------------------------
@@ -93,7 +94,7 @@ const CAMERA_FOV_DEG = 75;
 // =====================================================================
 
 // =====================================================
-// ORBIT GEOMETRY — Code 1's getOrbitPoint(), byte-for-byte unchanged.
+// ORBIT GEOMETRY — Point B's own pivot math, untouched.
 // =====================================================================
 
 function getOrbitPoint(angle, target) {
@@ -125,11 +126,11 @@ const camera = new THREE.PerspectiveCamera(
 );
 
 // ---------------------------------------------------------------------
-// OPENING_QUATERNION — Point A's permanent, locked orientation. Used
-// as-is for the entire HOLD_A phase, and as the mathematical starting
-// point for the approach's rotation (see OPENING_LOOK_TARGET below).
+// POSE A — Point A's own fixed orientation. Computed purely from the
+// hand-tuned yaw/pitch/roll above. Never touches POINT_B, orbitEntryPoint,
+// or any lookAt() call.
 // ---------------------------------------------------------------------
-const OPENING_QUATERNION = new THREE.Quaternion().setFromEuler(
+const POINT_A_QUATERNION = new THREE.Quaternion().setFromEuler(
   new THREE.Euler(
     THREE.MathUtils.degToRad(POINT_A_PITCH_DEG),
     THREE.MathUtils.degToRad(POINT_A_YAW_DEG),
@@ -139,34 +140,25 @@ const OPENING_QUATERNION = new THREE.Quaternion().setFromEuler(
 );
 
 // ---------------------------------------------------------------------
-// OPENING_LOOK_TARGET — a point in space such that
-// camera.lookAt(OPENING_LOOK_TARGET) FROM orbitEntryPoint reproduces
-// OPENING_QUATERNION exactly. It's built once, at startup, by taking
-// OPENING_QUATERNION's own forward direction and projecting it out
-// from orbitEntryPoint.
-//
-// This exists for exactly one reason: it lets the APPROACH phase
-// below lerp its look target from "the opening orientation" to
-// "POINT_B" using ordinary vector interpolation, while guaranteeing
-// that at t=0 the result is bit-for-bit the same direction as the
-// held Point-A pose, and at t=1 the result is bit-for-bit the same
-// direction Point B's own orbit produces on ITS first frame
-// (camera.lookAt(POINT_B) from orbitEntryPoint, angle = 0).
-//
-// Point B's own function (updateOrbit, further down) never
-// references this constant and is completely unaware of it — it is
-// pure Code 1, untouched.
+// POSE B — the exact rotation Point B's own orbit function produces
+// on its very first frame: standing at orbitEntryPoint, looking at
+// POINT_B (angle = ORBIT_START_ANGLE = 0). Built once at startup with
+// a throwaway Object3D so it uses the same math camera.lookAt() would
+// produce — this is Point B's own orientation, computed independently
+// of Point A.
 // ---------------------------------------------------------------------
-const OPENING_LOOK_TARGET = (function computeOpeningLookTargetFromQuaternion() {
-  const forward = new THREE.Vector3(0, 0, -1)
-    .applyQuaternion(OPENING_QUATERNION)
-    .normalize();
-  return orbitEntryPoint.clone().addScaledVector(forward, 100);
+const ORBIT_ENTRY_QUATERNION = (function computeOrbitEntryQuaternion() {
+  const dummy = new THREE.Object3D();
+  dummy.position.copy(orbitEntryPoint);
+  dummy.up.copy(camera.up);
+  dummy.lookAt(POINT_B);
+  return dummy.quaternion.clone();
 })();
 
-// The camera starts at Point A with exactly this locked orientation.
+// The camera starts at Point A with Point A's own orientation — not
+// derived from Point B in any way.
 camera.position.copy(POINT_A);
-camera.quaternion.copy(OPENING_QUATERNION);
+camera.quaternion.copy(POINT_A_QUATERNION);
 
 // =====================================================
 // RENDERER
@@ -215,10 +207,6 @@ controls.enabled = false;
 
 // =====================================================
 // EASING
-// Note: easeInOutCubic has ZERO derivative (zero rotational/positional
-// speed) at both t=0 and t=1. That is what keeps every phase boundary
-// in this file free of a sudden velocity change, not just a matching
-// value — this matters for both ends of the approach phase below.
 // =====================================================
 
 function easeInOutCubic(t) {
@@ -244,7 +232,6 @@ let cinematicStartTime = null;
 let cinematicActive = false;
 
 const _tmpPos = new THREE.Vector3();
-const _tmpLook = new THREE.Vector3();
 
 function startCinematic() {
   cinematicState = CinematicState.HOLD_A;
@@ -276,13 +263,12 @@ function finishCinematic() {
 
 // -----------------------------------------------------
 // PHASE 0 — hold static at Point A before moving.
-// Position AND rotation are the exact locked Point-A values, copied
-// from OPENING_QUATERNION every frame — no recomputation, no drift.
-// This is FRAME 1 / FRAME 2 in your test.
+// Position AND rotation are Point A's own fixed pose, copied every
+// frame — no recomputation, no drift, no reference to Point B.
 // -----------------------------------------------------
 function updateHoldA(elapsed) {
   camera.position.copy(POINT_A);
-  camera.quaternion.copy(OPENING_QUATERNION);
+  camera.quaternion.copy(POINT_A_QUATERNION);
 
   if (elapsed >= HOLD_AT_A_DURATION) {
     cinematicState = CinematicState.APPROACH;
@@ -293,47 +279,32 @@ function updateHoldA(elapsed) {
 // -----------------------------------------------------
 // PHASE 1 — Point A -> orbit entry point. VERY SLOW (7s).
 //
-// Position: a plain dolly, lerping from POINT_A to orbitEntryPoint —
-// never toward POINT_B itself.
+// Two FIXED camera poses are blended:
+//   Pose A: position = POINT_A,        quaternion = POINT_A_QUATERNION
+//   Pose B: position = orbitEntryPoint, quaternion = ORBIT_ENTRY_QUATERNION
 //
-// Rotation: lerps the LOOK TARGET (not a raw quaternion) from
-// OPENING_LOOK_TARGET to POINT_B, over the FULL APPROACH_DURATION,
-// using the same eased "t" as the position. Two guarantees fall out
-// of this:
-//
-//   - FRAME 2 -> FRAME 3 (hold end -> approach start): at t=0,
-//     eased=0, so the look target IS OPENING_LOOK_TARGET, which
-//     reproduces OPENING_QUATERNION exactly. Identical to the held
-//     frame. Zero rotational speed at this instant too (easing
-//     derivative is 0 at t=0), so there's no sudden onset either.
-//
-//   - FRAME 5 -> FRAME 6 (approach end -> Point B's first frame):
-//     at t=1, eased=1, the look target IS POINT_B, from position
-//     orbitEntryPoint — which is EXACTLY what updateOrbit's first
-//     frame produces (angle = ORBIT_START_ANGLE = 0, camera.lookAt
-//     (POINT_B), same position). Zero rotational speed here too
-//     (easing derivative is 0 at t=1), so the camera glides to a
-//     stop exactly as it starts orbiting — no snap.
-//
-// Because of this, Point B never has to do anything special to
-// avoid a jerk. It just does what it always did.
+// Position is a plain lerp between the two pose positions. Rotation
+// is a genuine quaternion SLERP between the two pose quaternions —
+// never a lookAt() call, never an interpolated look-at point. Because
+// slerp interpolates the rotation itself and never reads
+// camera.position, it cannot be thrown off by the camera still being
+// near POINT_A early in the approach the way a lookAt()-based method
+// was. At t=0 this is bit-for-bit Pose A (matches the held frame). At
+// t=1 this is bit-for-bit Pose B (matches Point B's own first orbit
+// frame, since ORBIT_ENTRY_QUATERNION was built from that exact pose).
 // -----------------------------------------------------
 function updateApproach(elapsed) {
   const t = Math.min(elapsed / APPROACH_DURATION, 1);
   const eased = easeInOutCubic(t);
 
   camera.position.lerpVectors(POINT_A, orbitEntryPoint, eased);
-
-  _tmpLook.lerpVectors(OPENING_LOOK_TARGET, POINT_B, eased);
-  camera.lookAt(_tmpLook);
+  camera.quaternion.slerpQuaternions(POINT_A_QUATERNION, ORBIT_ENTRY_QUATERNION, eased);
 
   if (t >= 1) {
-    // Snap to the exact values with zero floating-point drift. This
-    // produces the SAME state camera.lookAt(POINT_B) from
-    // orbitEntryPoint already gave us above — not a correction, just
-    // a precision guarantee.
+    // Snap to exact values, zero floating-point drift. Same state
+    // Point B's own first frame produces — not a correction.
     camera.position.copy(orbitEntryPoint);
-    camera.lookAt(POINT_B);
+    camera.quaternion.copy(ORBIT_ENTRY_QUATERNION);
 
     cinematicState = CinematicState.ORBIT;
     cinematicStartTime = performance.now() / 1000;
@@ -341,17 +312,10 @@ function updateApproach(elapsed) {
 }
 
 // -----------------------------------------------------
-// PHASE 2 — POINT B. THIS IS CODE 1's updateOrbit(). DO NOT MODIFY.
+// PHASE 2 — POINT B / ORBIT. UNCHANGED.
 //
 // Real circular motion around POINT_B at radius ORBIT_RADIUS,
-// camera.lookAt(POINT_B) every frame. POINT_B is only ever a pivot —
-// the camera position never touches it, never lerps toward it, and
-// the orbit radius never changes.
-//
-// This function is safe to leave completely untouched because
-// updateApproach (above) already delivers the camera here already
-// looking at POINT_B from orbitEntryPoint — the exact state this
-// function's own first frame (angle = ORBIT_START_ANGLE) produces.
+// camera.lookAt(POINT_B) every frame. POINT_B is only ever a pivot.
 // -----------------------------------------------------
 function updateOrbit(elapsed) {
   const t = Math.min(elapsed / ORBIT_DURATION, 1);
@@ -372,7 +336,6 @@ function updateOrbit(elapsed) {
 
 // -----------------------------------------------------
 // PHASE 3 — orbit exit point -> POINT_C (slow float to top view).
-// UNCHANGED.
 // -----------------------------------------------------
 function updateTopTransition(elapsed) {
   const t = Math.min(elapsed / TOP_TRANSITION_DURATION, 1);
