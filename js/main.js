@@ -5,6 +5,11 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import {
+  initLayoutSystem,
+  updateLayoutSystem,
+  isLayoutTransitionActive,
+} from "./layout-selector.js";
 
 // =====================================================
 // DOM REFERENCES
@@ -267,6 +272,10 @@ function finishCinematic() {
   controls.enablePan = true;
   controls.enableZoom = true;
   controls.update();
+
+  // Phase 2 begins only now that the cinematic has reached
+  // INTERACTIVE — hand the camera/controls to the layout system once.
+  initLayoutSystem({ THREE, camera, controls });
 }
 
 // -----------------------------------------------------
@@ -566,7 +575,11 @@ function animate() {
   if (cinematicActive) {
     updateCinematic(now);
   } else if (cinematicState === CinematicState.INTERACTIVE) {
-    controls.update();
+    if (isLayoutTransitionActive()) {
+      updateLayoutSystem(now);
+    } else {
+      controls.update();
+    }
   }
 
   updateCameraDebugOverlay();
