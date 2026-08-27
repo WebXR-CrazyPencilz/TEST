@@ -19,77 +19,92 @@ const cameraDebugEl = document.getElementById("camera-debug");
 // =====================================================================
 // =====================================================================
 //
-//   CINEMATIC CAMERA SETTINGS
+//   CINEMATIC CAMERA POSITIONS
 //   EDIT THESE VALUES MANUALLY — nothing here is auto-calculated.
+//   There is exactly ONE Point A, ONE Point B, ONE Point C.
 //
 // =====================================================================
 // =====================================================================
 
 // ---------------------------------------------------------------------
-// POINT A — STARTING CAMERA POSITION
-// The cinematic camera begins here. Low, dramatic angle recommended.
-// The camera looks toward Point B when the cinematic starts.
+// POINT A — THE ONLY STARTING CAMERA POSITION. UNCHANGED.
 // ---------------------------------------------------------------------
 const POINT_A = new THREE.Vector3(
-  -173.94,  // X
-  -6.06,    // Y
-  248.77    // Z
+  -191.31,
+  4,
+  258.59
 );
 
 // ---------------------------------------------------------------------
-// POINT B — ORBIT CENTER (NOT a camera position)
-// This is the pivot the camera circles around in Phase 2.
-// The camera moves toward the "Point B area" in Phase 1, then orbits
-// around this point at ORBIT_RADIUS instead of passing through it.
+// POINT B — ORBIT CENTER (NOT a camera position). UNTOUCHED.
+// The camera never sits here, never passes through it, and never
+// interpolates its position toward it.
 // ---------------------------------------------------------------------
 const POINT_B = new THREE.Vector3(
-  139.22,  // X
-  5.25,   // Y
-  39    // Z
+  139.22,
+  5.25,
+  39
 );
 
 // ---------------------------------------------------------------------
-// POINT C — FINAL TOP VIEW CAMERA POSITION
-// The camera slowly floats here after the orbit finishes.
-// This should be a true bird's-eye position above the model.
-//
-// Y controls zoom level: this is a straight height, NOT calculated
-// from the model's bounding box, so if the top view looks too zoomed
-// in, just raise this number until the full site fits comfortably.
+// POINT C — FINAL TOP VIEW CAMERA POSITION. UNCHANGED.
 // ---------------------------------------------------------------------
 const POINT_C = new THREE.Vector3(
-  0,    // X
-  650,  // Y — increase to zoom out, decrease to zoom in
-  0     // Z
+  0,
+  220,
+  0
 );
 
+// =====================================================================
+// POINT A ROTATION — the left-facing opening composition. UNCHANGED.
+// =====================================================================
+
+const POINT_A_YAW_DEG = -20;    // turn left
+const POINT_A_PITCH_DEG = -15;  // tilt down
+const POINT_A_ROLL_DEG = 0;     // level horizon
+
+// =====================================================================
+// ORBIT SETTINGS — Code 1's exact values. DO NOT CHANGE.
+// =====================================================================
+
+const ORBIT_RADIUS = 20;
+const ORBIT_START_ANGLE = 0;
+const ORBIT_END_ANGLE = Math.PI;
+const ORBIT_HEIGHT_OFFSET = 4;
+
+// =====================================================================
+// TIMING (seconds)
+// =====================================================================
+
+const HOLD_AT_A_DURATION = 1.5;       // pause at Point A before moving
+const APPROACH_DURATION = 7.0;        // Point A -> orbit entry, very slow
+const ORBIT_DURATION = 3.5;           // circular orbit around Point B — UNTOUCHED
+const TOP_TRANSITION_DURATION = 5.0;  // orbit -> Point C, very slow rise
+
 // ---------------------------------------------------------------------
-// TOP_VIEW_UP — locks the camera's roll for the final straight-down
-// shot. Three.js's lookAt() becomes unstable when looking perfectly
-// vertical, which can rotate the final view to a random angle. This
-// vector pins "up" on screen to world -Z (north) so the top view
-// always lands aligned instead of tilted.
+// TOP_VIEW_UP — locks roll for the final straight-down shot.
 // ---------------------------------------------------------------------
 const TOP_VIEW_UP = new THREE.Vector3(0, 0, -1);
 
-// ---------------------------------------------------------------------
-// ORBIT SETTINGS (Phase 2 — circular movement around POINT_B)
-// ---------------------------------------------------------------------
-const ORBIT_RADIUS = 20;               // distance from POINT_B while orbiting
-const ORBIT_START_ANGLE = 0;           // radians
-const ORBIT_END_ANGLE = Math.PI * 1.0; // radians (Math.PI * 1.0 ≈ 180°)
-const ORBIT_HEIGHT_OFFSET = 4;         // camera height above POINT_B.y during orbit
-
-// ---------------------------------------------------------------------
-// TIMING (seconds) — edit freely, phases use these directly
-// ---------------------------------------------------------------------
-const APPROACH_DURATION = 2.5;        // Phase 1: A -> B area
-const ORBIT_DURATION = 3.5;           // Phase 2: circular orbit around B
-const TOP_TRANSITION_DURATION = 3.5;  // Phase 3: orbit -> C
+const CAMERA_FOV_DEG = 75;
 
 // =====================================================================
 // END OF EDITABLE CINEMATIC SETTINGS
 // =====================================================================
+
+// =====================================================
+// ORBIT GEOMETRY — Code 1's getOrbitPoint(), byte-for-byte unchanged.
+// =====================================================================
+
+function getOrbitPoint(angle, target) {
+  const x = POINT_B.x + ORBIT_RADIUS * Math.cos(angle);
+  const z = POINT_B.z + ORBIT_RADIUS * Math.sin(angle);
+  const y = POINT_B.y + ORBIT_HEIGHT_OFFSET;
+  return target.set(x, y, z);
+}
+
+const orbitEntryPoint = getOrbitPoint(ORBIT_START_ANGLE, new THREE.Vector3());
+const orbitExitPoint = getOrbitPoint(ORBIT_END_ANGLE, new THREE.Vector3());
 
 // =====================================================
 // SCENE
@@ -103,15 +118,55 @@ scene.background = new THREE.Color(0xeeeeee);
 // =====================================================
 
 const camera = new THREE.PerspectiveCamera(
-  45,
+  CAMERA_FOV_DEG,
   window.innerWidth / window.innerHeight,
   0.01,
   10000
 );
 
-// Camera starts at Point A, looking toward Point B, immediately on page load.
+// ---------------------------------------------------------------------
+// OPENING_QUATERNION — Point A's permanent, locked orientation. Used
+// as-is for the entire HOLD_A phase, and as the mathematical starting
+// point for the approach's rotation (see OPENING_LOOK_TARGET below).
+// ---------------------------------------------------------------------
+const OPENING_QUATERNION = new THREE.Quaternion().setFromEuler(
+  new THREE.Euler(
+    THREE.MathUtils.degToRad(POINT_A_PITCH_DEG),
+    THREE.MathUtils.degToRad(POINT_A_YAW_DEG),
+    THREE.MathUtils.degToRad(POINT_A_ROLL_DEG),
+    "YXZ"
+  )
+);
+
+// ---------------------------------------------------------------------
+// OPENING_LOOK_TARGET — a point in space such that
+// camera.lookAt(OPENING_LOOK_TARGET) FROM orbitEntryPoint reproduces
+// OPENING_QUATERNION exactly. It's built once, at startup, by taking
+// OPENING_QUATERNION's own forward direction and projecting it out
+// from orbitEntryPoint.
+//
+// This exists for exactly one reason: it lets the APPROACH phase
+// below lerp its look target from "the opening orientation" to
+// "POINT_B" using ordinary vector interpolation, while guaranteeing
+// that at t=0 the result is bit-for-bit the same direction as the
+// held Point-A pose, and at t=1 the result is bit-for-bit the same
+// direction Point B's own orbit produces on ITS first frame
+// (camera.lookAt(POINT_B) from orbitEntryPoint, angle = 0).
+//
+// Point B's own function (updateOrbit, further down) never
+// references this constant and is completely unaware of it — it is
+// pure Code 1, untouched.
+// ---------------------------------------------------------------------
+const OPENING_LOOK_TARGET = (function computeOpeningLookTargetFromQuaternion() {
+  const forward = new THREE.Vector3(0, 0, -1)
+    .applyQuaternion(OPENING_QUATERNION)
+    .normalize();
+  return orbitEntryPoint.clone().addScaledVector(forward, 100);
+})();
+
+// The camera starts at Point A with exactly this locked orientation.
 camera.position.copy(POINT_A);
-camera.lookAt(POINT_B);
+camera.quaternion.copy(OPENING_QUATERNION);
 
 // =====================================================
 // RENDERER
@@ -160,6 +215,10 @@ controls.enabled = false;
 
 // =====================================================
 // EASING
+// Note: easeInOutCubic has ZERO derivative (zero rotational/positional
+// speed) at both t=0 and t=1. That is what keeps every phase boundary
+// in this file free of a sudden velocity change, not just a matching
+// value — this matters for both ends of the approach phase below.
 // =====================================================
 
 function easeInOutCubic(t) {
@@ -173,43 +232,22 @@ function easeInOutCubic(t) {
 // =====================================================
 
 const CinematicState = {
-  APPROACH: "APPROACH",             // Phase 1: A -> B area
-  ORBIT: "ORBIT",                   // Phase 2: circular orbit around B
-  TOP_TRANSITION: "TOP_TRANSITION", // Phase 3: orbit -> C
+  HOLD_A: "HOLD_A",
+  APPROACH: "APPROACH",
+  ORBIT: "ORBIT",
+  TOP_TRANSITION: "TOP_TRANSITION",
   INTERACTIVE: "INTERACTIVE",
 };
 
-let cinematicState = CinematicState.APPROACH;
-let cinematicStartTime = null; // performance.now()/1000 when current phase began
+let cinematicState = CinematicState.HOLD_A;
+let cinematicStartTime = null;
 let cinematicActive = false;
 
-// Point on the orbit circle where Phase 1 ends / Phase 2 begins.
-// Computed once, when the cinematic starts, from ORBIT_START_ANGLE.
-let orbitEntryPoint = null;
-
-// Point on the orbit circle where Phase 2 ends / Phase 3 begins.
-// Computed once, from ORBIT_END_ANGLE.
-let orbitExitPoint = null;
-
-// Reused vectors (avoid per-frame allocation).
 const _tmpPos = new THREE.Vector3();
-
-// -----------------------------------------------------
-// Compute a point on the orbit circle around POINT_B
-// for a given angle.
-// -----------------------------------------------------
-function getOrbitPoint(angle, target) {
-  const x = POINT_B.x + ORBIT_RADIUS * Math.cos(angle);
-  const z = POINT_B.z + ORBIT_RADIUS * Math.sin(angle);
-  const y = POINT_B.y + ORBIT_HEIGHT_OFFSET;
-  return target.set(x, y, z);
-}
+const _tmpLook = new THREE.Vector3();
 
 function startCinematic() {
-  orbitEntryPoint = getOrbitPoint(ORBIT_START_ANGLE, new THREE.Vector3());
-  orbitExitPoint = getOrbitPoint(ORBIT_END_ANGLE, new THREE.Vector3());
-
-  cinematicState = CinematicState.APPROACH;
+  cinematicState = CinematicState.HOLD_A;
   cinematicStartTime = performance.now() / 1000;
   cinematicActive = true;
 
@@ -237,27 +275,83 @@ function finishCinematic() {
 }
 
 // -----------------------------------------------------
-// PHASE 1 — A -> B area (approach the orbit entry point)
+// PHASE 0 — hold static at Point A before moving.
+// Position AND rotation are the exact locked Point-A values, copied
+// from OPENING_QUATERNION every frame — no recomputation, no drift.
+// This is FRAME 1 / FRAME 2 in your test.
+// -----------------------------------------------------
+function updateHoldA(elapsed) {
+  camera.position.copy(POINT_A);
+  camera.quaternion.copy(OPENING_QUATERNION);
+
+  if (elapsed >= HOLD_AT_A_DURATION) {
+    cinematicState = CinematicState.APPROACH;
+    cinematicStartTime = performance.now() / 1000;
+  }
+}
+
+// -----------------------------------------------------
+// PHASE 1 — Point A -> orbit entry point. VERY SLOW (7s).
+//
+// Position: a plain dolly, lerping from POINT_A to orbitEntryPoint —
+// never toward POINT_B itself.
+//
+// Rotation: lerps the LOOK TARGET (not a raw quaternion) from
+// OPENING_LOOK_TARGET to POINT_B, over the FULL APPROACH_DURATION,
+// using the same eased "t" as the position. Two guarantees fall out
+// of this:
+//
+//   - FRAME 2 -> FRAME 3 (hold end -> approach start): at t=0,
+//     eased=0, so the look target IS OPENING_LOOK_TARGET, which
+//     reproduces OPENING_QUATERNION exactly. Identical to the held
+//     frame. Zero rotational speed at this instant too (easing
+//     derivative is 0 at t=0), so there's no sudden onset either.
+//
+//   - FRAME 5 -> FRAME 6 (approach end -> Point B's first frame):
+//     at t=1, eased=1, the look target IS POINT_B, from position
+//     orbitEntryPoint — which is EXACTLY what updateOrbit's first
+//     frame produces (angle = ORBIT_START_ANGLE = 0, camera.lookAt
+//     (POINT_B), same position). Zero rotational speed here too
+//     (easing derivative is 0 at t=1), so the camera glides to a
+//     stop exactly as it starts orbiting — no snap.
+//
+// Because of this, Point B never has to do anything special to
+// avoid a jerk. It just does what it always did.
 // -----------------------------------------------------
 function updateApproach(elapsed) {
   const t = Math.min(elapsed / APPROACH_DURATION, 1);
   const eased = easeInOutCubic(t);
 
-  _tmpPos.lerpVectors(POINT_A, orbitEntryPoint, eased);
-  camera.position.copy(_tmpPos);
-  camera.lookAt(POINT_B);
+  camera.position.lerpVectors(POINT_A, orbitEntryPoint, eased);
+
+  _tmpLook.lerpVectors(OPENING_LOOK_TARGET, POINT_B, eased);
+  camera.lookAt(_tmpLook);
 
   if (t >= 1) {
+    // Snap to the exact values with zero floating-point drift. This
+    // produces the SAME state camera.lookAt(POINT_B) from
+    // orbitEntryPoint already gave us above — not a correction, just
+    // a precision guarantee.
+    camera.position.copy(orbitEntryPoint);
+    camera.lookAt(POINT_B);
+
     cinematicState = CinematicState.ORBIT;
     cinematicStartTime = performance.now() / 1000;
   }
 }
 
 // -----------------------------------------------------
-// PHASE 2 — circular orbit around POINT_B
-// True circular motion: camera travels along the circle of
-// radius ORBIT_RADIUS centered on POINT_B, never cutting
-// through the center point.
+// PHASE 2 — POINT B. THIS IS CODE 1's updateOrbit(). DO NOT MODIFY.
+//
+// Real circular motion around POINT_B at radius ORBIT_RADIUS,
+// camera.lookAt(POINT_B) every frame. POINT_B is only ever a pivot —
+// the camera position never touches it, never lerps toward it, and
+// the orbit radius never changes.
+//
+// This function is safe to leave completely untouched because
+// updateApproach (above) already delivers the camera here already
+// looking at POINT_B from orbitEntryPoint — the exact state this
+// function's own first frame (angle = ORBIT_START_ANGLE) produces.
 // -----------------------------------------------------
 function updateOrbit(elapsed) {
   const t = Math.min(elapsed / ORBIT_DURATION, 1);
@@ -277,9 +371,8 @@ function updateOrbit(elapsed) {
 }
 
 // -----------------------------------------------------
-// PHASE 3 — orbit exit point -> POINT_C (slow float to top view)
-// Height rises and horizontal distance closes smoothly while
-// the look target eases from POINT_B toward the model center.
+// PHASE 3 — orbit exit point -> POINT_C (slow float to top view).
+// UNCHANGED.
 // -----------------------------------------------------
 function updateTopTransition(elapsed) {
   const t = Math.min(elapsed / TOP_TRANSITION_DURATION, 1);
@@ -288,18 +381,12 @@ function updateTopTransition(elapsed) {
   _tmpPos.lerpVectors(orbitExitPoint, POINT_C, eased);
   camera.position.copy(_tmpPos);
 
-  // Look target eases from Point B toward the world origin so the
-  // final frame looks straight down, matching a true top view.
   const lookTarget = new THREE.Vector3().lerpVectors(
     POINT_B,
     new THREE.Vector3(0, 0, 0),
     eased
   );
 
-  // Lock the camera's "up" direction toward world -Z (north) as the
-  // view approaches straight-down. Without this, lookAt() near-vertical
-  // becomes unstable and the final top view can land at a random,
-  // tilted roll angle instead of a clean north-aligned top-down shot.
   camera.up.lerpVectors(camera.up, TOP_VIEW_UP, eased).normalize();
 
   camera.lookAt(lookTarget);
@@ -316,6 +403,9 @@ function updateCinematic(nowSeconds) {
   const elapsed = nowSeconds - cinematicStartTime;
 
   switch (cinematicState) {
+    case CinematicState.HOLD_A:
+      updateHoldA(elapsed);
+      break;
     case CinematicState.APPROACH:
       updateApproach(elapsed);
       break;
@@ -335,20 +425,16 @@ function updateCinematic(nowSeconds) {
 // =====================================================
 
 const loader = new GLTFLoader();
-let loadedModel = null; // kept for raycast point-picking (see click picker below)
+let loadedModel = null;
 
 loader.load(
   "./test.glb",
 
-  // ---------------------------------------------------
-  // ON LOAD
-  // ---------------------------------------------------
   function (gltf) {
     const model = gltf.scene;
     scene.add(model);
     loadedModel = model;
 
-    // Enable shadows on all meshes.
     model.traverse(function (object) {
       if (object.isMesh) {
         object.castShadow = true;
@@ -356,9 +442,6 @@ loader.load(
       }
     });
 
-    // Bounding box is still calculated (for centering / controls
-    // limits / near-far planes) but it never touches POINT_A,
-    // POINT_B or POINT_C — those stay exactly as set above.
     const box = new THREE.Box3().setFromObject(model);
     const center = box.getCenter(new THREE.Vector3());
 
@@ -370,7 +453,6 @@ loader.load(
     const centeredSize = centeredBox.getSize(new THREE.Vector3());
     const maxSize = Math.max(centeredSize.x, centeredSize.y, centeredSize.z);
 
-    // ---- Log real model dimensions so POINT_C can be sized correctly ----
     const fovRadiansForLog = THREE.MathUtils.degToRad(camera.fov);
     const suggestedTopY =
       ((maxSize / 2) / Math.tan(fovRadiansForLog / 2)) * 1.3;
@@ -382,9 +464,6 @@ loader.load(
     console.log("Current POINT_C.y is:", POINT_C.y);
     console.log("================================");
 
-    // Reasonable near/far + orbit-control distance limits based on
-    // model scale, purely for render quality and post-cinematic
-    // interaction — not used anywhere in the A/B/C cinematic path.
     camera.near = Math.max(maxSize / 1000, 0.01);
     camera.far = Math.max(POINT_C.length(), maxSize) * 20;
     camera.updateProjectionMatrix();
@@ -392,7 +471,6 @@ loader.load(
     controls.minDistance = Math.max(maxSize * 0.05, 0.1);
     controls.maxDistance = Math.max(POINT_C.length() * 4, maxSize * 10);
 
-    // ---- Fade out loading screen, then begin cinematic ----
     loadingScreenEl.classList.add("fade-out");
     setTimeout(function () {
       loadingScreenEl.style.display = "none";
@@ -400,9 +478,6 @@ loader.load(
     }, 500);
   },
 
-  // ---------------------------------------------------
-  // PROGRESS
-  // ---------------------------------------------------
   function (xhr) {
     if (xhr.total > 0) {
       const percent = (xhr.loaded / xhr.total) * 100;
@@ -412,9 +487,6 @@ loader.load(
     }
   },
 
-  // ---------------------------------------------------
-  // ERROR
-  // ---------------------------------------------------
   function (error) {
     console.error("GLB LOAD ERROR:", error);
 
@@ -438,9 +510,6 @@ window.addEventListener("resize", function () {
 
 // =====================================================
 // CAMERA DEBUG OVERLAY
-// Shows live position (world units) and rotation (degrees)
-// every frame, plus which cinematic phase is currently active.
-// Toggle with the "D" key.
 // =====================================================
 
 let debugOverlayVisible = true;
@@ -452,11 +521,14 @@ window.addEventListener("keydown", function (e) {
   }
 });
 
+let lastPickedPoint = null;
+let pickedPointFlashUntil = 0;
+
 function updateCameraDebugOverlay() {
   if (!debugOverlayVisible) return;
 
   const p = camera.position;
-  const r = camera.rotation; // radians
+  const r = camera.rotation;
   const toDeg = THREE.MathUtils.radToDeg;
 
   cameraDebugEl.textContent =
@@ -479,9 +551,7 @@ function updateCameraDebugOverlay() {
 }
 
 // =====================================================
-// CLICK-TO-PICK: log exact 3D world coordinates of whatever
-// you click on the model (e.g. the flag), so you can copy them
-// straight into POINT_B / POINT_A / POINT_C above.
+// CLICK-TO-PICK
 // =====================================================
 
 const raycaster = new THREE.Raycaster();
@@ -513,14 +583,10 @@ renderer.domElement.addEventListener("click", function (event) {
     console.log("z:", point.z.toFixed(3));
     console.log("================================");
 
-    // Also flash it briefly in the on-screen debug overlay.
     lastPickedPoint = point.clone();
     pickedPointFlashUntil = performance.now() / 1000 + 3;
   }
 });
-
-let lastPickedPoint = null;
-let pickedPointFlashUntil = 0;
 
 // =====================================================
 // RENDER LOOP
