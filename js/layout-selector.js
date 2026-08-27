@@ -19,7 +19,7 @@
 // it — increase the magnitude if it still looks tilted, flip the sign
 // if it rotated the wrong way.
 // ---------------------------------------------------------------------
-const DEFAULT_TOP_VIEW_ROTATION_DEG = 12.5;
+const DEFAULT_TOP_VIEW_ROTATION_DEG = 12;
 
 function buildTopViewUp(THREE, rotationDeg) {
   const rad = (rotationDeg * Math.PI) / 180;
@@ -29,21 +29,23 @@ function buildTopViewUp(THREE, rotationDeg) {
 // ---------------------------------------------------------------------
 // LAYOUTS — data-driven. Add a new entry here and it automatically
 // appears in the UI panel and becomes selectable; no other code in
-// this file needs to change. Fill in real position/target/fov values
-// as they become available — the placeholders below (all zero
-// vectors) are structural only.
+// this file needs to change.
+//
+// "target" is OPTIONAL. If you omit it, it is computed automatically
+// as directly below "position" (same X and Z, y = 0) — which is what
+// guarantees a pure straight-down view (rotation x: -90, y: 0, z: 0)
+// for every layout, with nothing to keep in sync by hand. Only set
+// "target" explicitly if a layout needs to look at some other point
+// than straight down from its own position.
 //
 // "up" (optional): controls ROLL — which direction is "up" on screen.
 // Position + target only fix WHERE the camera is and WHAT it looks
 // at; they say nothing about how the image is rotated around that
-// view direction. For a straight-down top view, "up" is what decides
-// whether the layout appears level/aligned or tilted. All layouts
-// below default to DEFAULT_TOP_VIEW_UP (built from
-// DEFAULT_TOP_VIEW_ROTATION_DEG above) — tweak that one constant to
-// adjust every layout at once, or override "up" individually on a
-// specific layout if it needs its own different alignment. If
-// omitted entirely, the layout keeps whatever "up" the camera already
-// had going into the transition (no forced roll).
+// view direction. All layouts below default to DEFAULT_TOP_VIEW_UP
+// (built from DEFAULT_TOP_VIEW_ROTATION_DEG above, currently 0° — no
+// tilt) — tweak that one constant to adjust every layout at once, or
+// override "up" individually on a specific layout if it needs its
+// own different alignment.
 // ---------------------------------------------------------------------
 export const LAYOUTS = {};
 
@@ -54,53 +56,59 @@ function buildDefaultLayouts(THREE) {
     overall: {
       label: "Overall",
       position: new THREE.Vector3(0, 358, 0),
-      target: new THREE.Vector3(0, 0, 0),
-      up: DEFAULT_TOP_VIEW_UP.clone(),
+      up: new THREE.Vector3(0, 0, -1), // straight top view, 0° roll — matches the cinematic's own TOP_VIEW_UP
       fov: 75,
     },
     layout01: {
       label: "Layout 01",
-      position: new THREE.Vector3(-16.20, 90, -155.27),
-      target: new THREE.Vector3(-40.15, 0, -155.27),
+      position: new THREE.Vector3(-16.20, 108.04, -155.27),
       up: DEFAULT_TOP_VIEW_UP.clone(),
       fov: 75,
     },
     layout02: {
       label: "Layout 02",
       position: new THREE.Vector3(0, 0, 0), // TODO: provide real value
-      target: new THREE.Vector3(0, 0, 0),   // TODO: provide real value
       up: DEFAULT_TOP_VIEW_UP.clone(),
       fov: 75,
     },
     layout03: {
       label: "Layout 03",
       position: new THREE.Vector3(0, 0, 0), // TODO: provide real value
-      target: new THREE.Vector3(0, 0, 0),   // TODO: provide real value
       up: DEFAULT_TOP_VIEW_UP.clone(),
       fov: 75,
     },
     layout04: {
       label: "Layout 04",
       position: new THREE.Vector3(0, 0, 0), // TODO: provide real value
-      target: new THREE.Vector3(0, 0, 0),   // TODO: provide real value
       up: DEFAULT_TOP_VIEW_UP.clone(),
       fov: 75,
     },
     layout05: {
       label: "Layout 05",
       position: new THREE.Vector3(0, 0, 0), // TODO: provide real value
-      target: new THREE.Vector3(0, 0, 0),   // TODO: provide real value
       up: DEFAULT_TOP_VIEW_UP.clone(),
       fov: 75,
     },
     layout06: {
       label: "Layout 06",
       position: new THREE.Vector3(0, 0, 0), // TODO: provide real value
-      target: new THREE.Vector3(0, 0, 0),   // TODO: provide real value
       up: DEFAULT_TOP_VIEW_UP.clone(),
       fov: 75,
     },
   };
+}
+
+// -----------------------------------------------------
+// resolveLayoutTarget — returns the layout's own "target" if it
+// specified one, otherwise computes the point directly below its
+// "position" (same X/Z, y = 0). This is the single place that
+// guarantees "no target specified" always means "look straight down",
+// so every top-view layout produces the same rotation (x: -90,
+// y: 0, z: 0) without needing to keep position/target in sync by hand.
+// -----------------------------------------------------
+function resolveLayoutTarget(layout) {
+  if (layout.target) return layout.target;
+  return new _THREE.Vector3(layout.position.x, 0, layout.position.z);
 }
 
 // ---------------------------------------------------------------------
@@ -203,6 +211,7 @@ export function updateLayoutSystem(nowSeconds) {
   if (!layoutTransitionActive) return;
 
   const layout = LAYOUTS[pendingLayoutKey];
+  const resolvedTarget = resolveLayoutTarget(layout);
   const elapsed = nowSeconds - layoutTransitionStartTime;
   const t = Math.min(elapsed / LAYOUT_TRANSITION_DURATION, 1);
   const eased = easeInOutCubic(t);
@@ -216,7 +225,7 @@ export function updateLayoutSystem(nowSeconds) {
   const targetUp = layout.up || _layoutFromUp;
   _camera.up.lerpVectors(_layoutFromUp, targetUp, eased).normalize();
 
-  _layoutTmpLook.lerpVectors(_layoutFromTarget, layout.target, eased);
+  _layoutTmpLook.lerpVectors(_layoutFromTarget, resolvedTarget, eased);
   _camera.lookAt(_layoutTmpLook);
 
   if (typeof layout.fov === "number" && layout.fov !== _layoutFromFov) {
@@ -227,14 +236,14 @@ export function updateLayoutSystem(nowSeconds) {
   if (t >= 1) {
     _camera.position.copy(layout.position);
     _camera.up.copy(targetUp).normalize();
-    _camera.lookAt(layout.target);
+    _camera.lookAt(resolvedTarget);
 
     if (typeof layout.fov === "number") {
       _camera.fov = layout.fov;
       _camera.updateProjectionMatrix();
     }
 
-    _controls.target.copy(layout.target);
+    _controls.target.copy(resolvedTarget);
     _controls.enabled = true;
     _controls.update();
 

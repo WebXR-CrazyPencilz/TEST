@@ -10,6 +10,7 @@ import {
   updateLayoutSystem,
   isLayoutTransitionActive,
 } from "./layout-selector.js";
+import { initAxisGizmo, renderAxisGizmo } from "./axis-gizmo.js";
 
 // =====================================================
 // DOM REFERENCES
@@ -216,6 +217,12 @@ controls.enableRotate = false;
 controls.minDistance = 0.1;
 controls.maxDistance = 10000;
 controls.enabled = false;
+
+// =====================================================
+// AXIS ORIENTATION GIZMO — visual aid only, corner overlay.
+// =====================================================
+
+initAxisGizmo({ THREE, renderer, camera });
 
 // =====================================================
 // EASING
@@ -585,6 +592,7 @@ function animate() {
   updateCameraDebugOverlay();
 
   renderer.render(scene, camera);
+  renderAxisGizmo();
 }
 
 animate();

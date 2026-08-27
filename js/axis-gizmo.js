@@ -189,8 +189,17 @@ export function renderAxisGizmo() {
   _renderer.setScissorTest(true);
   _renderer.setViewport(rect.x, rect.y, rect.size, rect.size);
   _renderer.setScissor(rect.x, rect.y, rect.size, rect.size);
+
+  // Don't let this render call clear the color buffer — that would
+  // wipe the main scene's pixels in this corner to black before the
+  // gizmo draws. Only clear depth, so the gizmo's own axes still
+  // depth-sort correctly against each other, while compositing on
+  // top of whatever the main render already put in this corner.
+  const prevAutoClear = _renderer.autoClear;
+  _renderer.autoClear = false;
   _renderer.clearDepth();
   _renderer.render(_gizmoScene, _gizmoCamera);
+  _renderer.autoClear = prevAutoClear;
 
   // Restore full-canvas viewport/scissor so the NEXT frame's main
   // scene render (which expects to draw over the whole canvas) isn't
