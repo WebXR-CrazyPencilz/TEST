@@ -410,7 +410,7 @@ const loader = new GLTFLoader();
 let loadedModel = null;
 
 loader.load(
-  "./test.glb",
+  "./test1.glb",
 
   function (gltf) {
     const model = gltf.scene;

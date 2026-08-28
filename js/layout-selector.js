@@ -19,7 +19,7 @@
 // it — increase the magnitude if it still looks tilted, flip the sign
 // if it rotated the wrong way.
 // ---------------------------------------------------------------------
-const DEFAULT_TOP_VIEW_ROTATION_DEG = 12;
+const DEFAULT_TOP_VIEW_ROTATION_DEG = 13.5;
 
 function buildTopViewUp(THREE, rotationDeg) {
   const rad = (rotationDeg * Math.PI) / 180;
@@ -67,31 +67,25 @@ function buildDefaultLayouts(THREE) {
     },
     layout02: {
       label: "Layout 02",
-      position: new THREE.Vector3(0, 0, 0), // TODO: provide real value
+      position: new THREE.Vector3(110.01, 61.45, -17.32),
       up: DEFAULT_TOP_VIEW_UP.clone(),
       fov: 75,
     },
     layout03: {
       label: "Layout 03",
-      position: new THREE.Vector3(0, 0, 0), // TODO: provide real value
+      position: new THREE.Vector3(87.75, 52.69, 75.56),
       up: DEFAULT_TOP_VIEW_UP.clone(),
       fov: 75,
     },
     layout04: {
       label: "Layout 04",
-      position: new THREE.Vector3(0, 0, 0), // TODO: provide real value
+      position: new THREE.Vector3(73.62, 50.06, 160.21),
       up: DEFAULT_TOP_VIEW_UP.clone(),
       fov: 75,
     },
     layout05: {
       label: "Layout 05",
-      position: new THREE.Vector3(0, 0, 0), // TODO: provide real value
-      up: DEFAULT_TOP_VIEW_UP.clone(),
-      fov: 75,
-    },
-    layout06: {
-      label: "Layout 06",
-      position: new THREE.Vector3(0, 0, 0), // TODO: provide real value
+      position: new THREE.Vector3(-52.25, 102.65, 230.79),
       up: DEFAULT_TOP_VIEW_UP.clone(),
       fov: 75,
     },
