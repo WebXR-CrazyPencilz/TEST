@@ -11,6 +11,7 @@ import {
   isLayoutTransitionActive,
 } from "./layout-selector.js";
 import { initAxisGizmo, renderAxisGizmo } from "./axis-gizmo.js";
+import { initPlotStatusSync } from "./plot-status-sync.js";
 
 // =====================================================
 // DOM REFERENCES
@@ -92,6 +93,14 @@ const TOP_VIEW_UP = new THREE.Vector3(0, 0, -1);
 
 const CAMERA_FOV_DEG = 75;
 
+// ---------------------------------------------------------------------
+// SHEET_WEB_APP_URL — the deployed Google Apps Script Web App URL
+// (ends in /exec). See Code.gs for the backend and its deployment
+// steps. Plot status syncing is skipped with a console warning until
+// this is filled in.
+// ---------------------------------------------------------------------
+const SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycby9zrmjaSxdHULdLXejoSvDVKD6BXxIoek_JS-mS5QFULoswOT6J8HWAiQ8-hBD9lrf/exec"; // TODO: paste your deployed Web App URL here
+
 // =====================================================================
 // END OF EDITABLE CINEMATIC SETTINGS
 // =====================================================================
@@ -144,23 +153,6 @@ const OPENING_QUATERNION = new THREE.Quaternion().setFromEuler(
 // OPENING_LOOK_TARGET — a point in space such that
 // camera.lookAt(OPENING_LOOK_TARGET) FROM POINT_A reproduces
 // OPENING_QUATERNION exactly.
-//
-// THIS IS THE FIX: this point is built from POINT_A — where the
-// camera actually starts — not from orbitEntryPoint. A previous
-// version anchored this point to orbitEntryPoint, which only matched
-// OPENING_QUATERNION when checked from a position the camera doesn't
-// occupy until the very end of the approach. That mismatch was the
-// real cause of the hold -> approach jerk: at t=0 the camera really
-// is at POINT_A, so the look target must be defined relative to
-// POINT_A for camera.lookAt() to reproduce the held orientation.
-//
-// Because updateApproach below always calls camera.lookAt() AFTER
-// setting camera.position to the actual, currently-interpolated
-// position (never a mismatched reference position), rotation stays
-// properly coupled to where the camera really is at every frame —
-// avoiding the visual "swimming"/collapse that can happen when
-// rotation is interpolated completely independently of position
-// (e.g. via a raw quaternion slerp) across a long dolly.
 // ---------------------------------------------------------------------
 const OPENING_LOOK_TARGET = (function computeOpeningLookTargetFromQuaternion() {
   const forward = new THREE.Vector3(0, 0, -1)
@@ -300,20 +292,6 @@ function updateHoldA(elapsed) {
 
 // -----------------------------------------------------
 // PHASE 1 — Point A -> orbit entry point. VERY SLOW (7s).
-//
-// Position is set FIRST, to the real interpolated position. THEN
-// camera.lookAt() is called using that same real position — rotation
-// is always computed relative to wherever the camera actually is,
-// never a mismatched reference point. This keeps the camera properly
-// "looking at something coherent" throughout the whole dolly, instead
-// of position and rotation drifting independently.
-//
-//   - t=0: position = POINT_A exactly, look target = OPENING_LOOK_TARGET
-//     exactly (now anchored to POINT_A) => reproduces OPENING_QUATERNION
-//     exactly. Matches the held frame with zero mismatch.
-//
-//   - t=1: position = orbitEntryPoint exactly, look target = POINT_B
-//     exactly => matches Point B's own first orbit frame exactly.
 // -----------------------------------------------------
 function updateApproach(elapsed) {
   const t = Math.min(elapsed / APPROACH_DURATION, 1);
@@ -402,6 +380,236 @@ function updateCinematic(nowSeconds) {
   }
 }
 
+// =====================================================================
+// =====================================================================
+//
+//   PHASE 1 (INVENTORY) — GLB OBJECT / PLOT INVENTORY
+//
+//   Pure debug/inspection tooling. Does not touch materials, colors,
+//   the camera, controls, or click-to-pick. Traverses the ENTIRE
+//   loaded GLB hierarchy (every object, not just meshes, not just top
+//   level), reports each one, and exposes them by name on
+//   window.GLB_OBJECTS for later phases to look up by Plot ID.
+//
+// =====================================================================
+// =====================================================================
+
+let _glbInventoryCache = null;
+
+// -----------------------------------------------------
+// buildGlbInventory — walks the full hierarchy with model.traverse(),
+// recording every object (mesh or not, visible or not, any depth).
+// Also populates window.GLB_OBJECTS[name] = object for every named
+// object, so later phases can map "Plot ID from a spreadsheet" ->
+// "this exact Three.js object" -> "its material".
+// -----------------------------------------------------
+function buildGlbInventory(model) {
+  const inventory = [];
+  window.GLB_OBJECTS = {};
+
+  model.traverse(function (object) {
+    const entry = {
+      name: object.name || "(unnamed)",
+      type: object.type,
+      parent: object.parent ? (object.parent.name || "(unnamed)") : null,
+      isMesh: !!object.isMesh,
+      meshDataName:
+        object.isMesh && object.geometry
+          ? object.geometry.name || "(unnamed geometry)"
+          : null,
+      position: object.position.clone(),
+      rotation: object.rotation.clone(),
+      scale: object.scale.clone(),
+    };
+
+    inventory.push(entry);
+
+    if (object.name) {
+      window.GLB_OBJECTS[object.name] = object;
+    }
+  });
+
+  return inventory;
+}
+
+// -----------------------------------------------------
+// printGlbInventory — formatted console report of a previously built
+// inventory. Separated from buildGlbInventory() so window.printGLBObjects()
+// can re-print without re-traversing the model.
+// -----------------------------------------------------
+function printGlbInventory(inventory) {
+  const totalObjects = inventory.length;
+  const totalMeshObjects = inventory.filter(function (entry) {
+    return entry.isMesh;
+  }).length;
+
+  console.log("====================================================");
+  console.log("GLB OBJECT INVENTORY");
+  console.log("====================================================");
+  console.log("");
+  console.log("TOTAL OBJECTS: " + totalObjects);
+  console.log("TOTAL MESH OBJECTS: " + totalMeshObjects);
+  console.log("");
+
+  inventory.forEach(function (entry) {
+    console.log("----------------------------------------------------");
+    console.log("OBJECT: " + entry.name);
+    console.log("TYPE: " + entry.type);
+    console.log("PARENT: " + (entry.parent || "(none)"));
+    console.log("IS MESH: " + entry.isMesh);
+    console.log("MESH DATA: " + (entry.meshDataName || "(none)"));
+    console.log(
+      "POSITION: x=" + entry.position.x.toFixed(3) +
+      ", y=" + entry.position.y.toFixed(3) +
+      ", z=" + entry.position.z.toFixed(3)
+    );
+    console.log(
+      "ROTATION (deg): x=" + THREE.MathUtils.radToDeg(entry.rotation.x).toFixed(2) +
+      ", y=" + THREE.MathUtils.radToDeg(entry.rotation.y).toFixed(2) +
+      ", z=" + THREE.MathUtils.radToDeg(entry.rotation.z).toFixed(2)
+    );
+    console.log(
+      "SCALE: x=" + entry.scale.x.toFixed(3) +
+      ", y=" + entry.scale.y.toFixed(3) +
+      ", z=" + entry.scale.z.toFixed(3)
+    );
+  });
+
+  console.log("----------------------------------------------------");
+  console.log("");
+
+  const allNames = inventory.map(function (entry) {
+    return entry.name;
+  });
+
+  console.log("ALL OBJECT NAMES:");
+  console.log(JSON.stringify(allNames, null, 2));
+}
+
+// window.printGLBObjects() — callable from the browser console at any
+// time after load, re-prints the same cached inventory without
+// re-traversing the model.
+window.printGLBObjects = function () {
+  if (!_glbInventoryCache) {
+    console.log("GLB inventory not built yet — model may still be loading.");
+    return;
+  }
+  printGlbInventory(_glbInventoryCache);
+};
+
+// -----------------------------------------------------
+// naturalSortNames — sorts numeric-looking names ("1", "2", ... "10")
+// in numeric order instead of alphabetical (which would otherwise put
+// "10" before "2"). Falls back to plain string comparison for
+// anything non-numeric.
+// -----------------------------------------------------
+function naturalSortNames(names) {
+  return names.slice().sort(function (a, b) {
+    const an = Number(a);
+    const bn = Number(b);
+    if (!isNaN(an) && !isNaN(bn)) return an - bn;
+    return a.localeCompare(b);
+  });
+}
+
+// -----------------------------------------------------
+// window.copyPlotIdsForSheet() — copies every named GLB object's name
+// (one per line, numerically sorted, "Scene" root excluded) straight
+// to the clipboard. Click cell A2 in your Google Sheet and paste —
+// Sheets fills them down column A automatically, one per row. This is
+// the exact list from the loaded model, so there's no risk of typos
+// or missed entries from copying a partial console printout by hand.
+// -----------------------------------------------------
+// -----------------------------------------------------
+// isPlotIdInRange — true only for names that are PURE integers (no
+// extra characters, e.g. "141" passes, "Circle012001" and
+// "Mesh.007" don't) between 1 and 600 inclusive. Everything else
+// (decorative circles, mesh data names, etc.) is ignored for now —
+// change PLOT_ID_MIN/PLOT_ID_MAX below if the real range changes, or
+// remove this filter entirely once every object needs including.
+// -----------------------------------------------------
+const PLOT_ID_MIN = 1;
+const PLOT_ID_MAX = 600;
+
+function isPlotIdInRange(name) {
+  if (!/^\d+$/.test(name)) return false; // must be ONLY digits, nothing else
+  const n = Number(name);
+  return n >= PLOT_ID_MIN && n <= PLOT_ID_MAX;
+}
+
+window.copyPlotIdsForSheet = function () {
+  if (!window.GLB_OBJECTS) {
+    console.warn("[copyPlotIdsForSheet] window.GLB_OBJECTS not found yet — model may still be loading.");
+    return;
+  }
+
+  const names = naturalSortNames(
+    Object.keys(window.GLB_OBJECTS).filter(isPlotIdInRange)
+  );
+  const text = names.join("\n");
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(function () {
+        console.log(
+          "[copyPlotIdsForSheet] Copied " + names.length +
+          " plot ID(s) (1–600 only) to the clipboard. Click cell A2 in your sheet and paste (Ctrl+V)."
+        );
+      })
+      .catch(function (err) {
+        console.error("[copyPlotIdsForSheet] Clipboard copy failed — printing the list instead:", err);
+        console.log(text);
+      });
+  } else {
+    console.log("[copyPlotIdsForSheet] Clipboard API unavailable — here's the list to copy manually:");
+    console.log(text);
+  }
+};
+
+// -----------------------------------------------------
+// On-page "Copy Plot IDs" button — a click-triggered alternative to
+// typing copyPlotIdsForSheet() in the DevTools console. A real click
+// is also a genuine user gesture, which the Clipboard API sometimes
+// requires more reliably than a command run from the console.
+// Bottom-left corner, out of the way of the layout panel (bottom-right).
+// -----------------------------------------------------
+function createCopyPlotIdsButton() {
+  if (document.getElementById("copy-plot-ids-btn")) return;
+
+  const btn = document.createElement("button");
+  btn.id = "copy-plot-ids-btn";
+  btn.textContent = "Copy Plot IDs";
+  Object.assign(btn.style, {
+    position: "fixed",
+    left: "16px",
+    top: "16px",
+    padding: "8px 14px",
+    background: "rgba(20, 20, 20, 0.75)",
+    color: "#fff",
+    border: "none",
+    borderRadius: "8px",
+    fontFamily: "system-ui, sans-serif",
+    fontSize: "13px",
+    cursor: "pointer",
+    zIndex: "1000",
+    boxShadow: "0 4px 16px rgba(0,0,0,0.35)",
+  });
+
+  const defaultLabel = "Copy Plot IDs";
+
+  btn.addEventListener("click", function () {
+    window.copyPlotIdsForSheet();
+    btn.textContent = "Copied!";
+    setTimeout(function () {
+      btn.textContent = defaultLabel;
+    }, 1500);
+  });
+
+  document.body.appendChild(btn);
+}
+
+createCopyPlotIdsButton();
+
 // =====================================================
 // GLTF / GLB LOADER
 // =====================================================
@@ -452,6 +660,20 @@ loader.load(
 
     controls.minDistance = Math.max(maxSize * 0.05, 0.1);
     controls.maxDistance = Math.max(POINT_C.length() * 4, maxSize * 10);
+
+    // ---- PHASE 1 (INVENTORY): build + print the full object list ----
+    _glbInventoryCache = buildGlbInventory(model);
+    printGlbInventory(_glbInventoryCache);
+
+    // ---- PHASE 2: sync plot status from the Google Sheet ----
+    if (SHEET_WEB_APP_URL) {
+      initPlotStatusSync({ sheetUrl: SHEET_WEB_APP_URL });
+    } else {
+      console.warn(
+        "[plot-status-sync] SHEET_WEB_APP_URL is empty — skipping sync. " +
+        "Paste your deployed Apps Script Web App URL into main.js."
+      );
+    }
 
     loadingScreenEl.classList.add("fade-out");
     setTimeout(function () {
