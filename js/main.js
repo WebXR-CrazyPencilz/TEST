@@ -667,7 +667,7 @@ loader.load(
 
     // ---- PHASE 2: sync plot status from the Google Sheet ----
     if (SHEET_WEB_APP_URL) {
-      initPlotStatusSync({ sheetUrl: SHEET_WEB_APP_URL });
+      initPlotStatusSync({ sheetUrl: SHEET_WEB_APP_URL, pollIntervalMs: 30 * 1000 });
     } else {
       console.warn(
         "[plot-status-sync] SHEET_WEB_APP_URL is empty — skipping sync. " +
