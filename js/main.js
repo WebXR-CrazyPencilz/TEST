@@ -12,6 +12,8 @@ import {
 } from "./layout-selector.js";
 import { initAxisGizmo, renderAxisGizmo } from "./axis-gizmo.js";
 import { initPlotStatusSync } from "./plot-status-sync.js";
+import { initGalleryAmenities } from "./gallery-amenities.js";
+import { initStreetView, updateStreetView, renderStreetViewInset } from "./street-view.js";
 
 // =====================================================
 // DOM REFERENCES
@@ -275,6 +277,10 @@ function finishCinematic() {
   // Phase 2 begins only now that the cinematic has reached
   // INTERACTIVE — hand the camera/controls to the layout system once.
   initLayoutSystem({ THREE, camera, controls });
+
+  // Street View depends on LAYOUTS already being populated by
+  // initLayoutSystem() above, so it's initialized right after.
+  initStreetView({ THREE, camera, controls, scene, renderer });
 }
 
 // -----------------------------------------------------
@@ -611,6 +617,12 @@ function createCopyPlotIdsButton() {
 createCopyPlotIdsButton();
 
 // =====================================================
+// GALLERY + AMENITIES BUTTONS (top-left, below Copy Plot IDs)
+// =====================================================
+
+initGalleryAmenities();
+
+// =====================================================
 // GLTF / GLB LOADER
 // =====================================================
 
@@ -804,6 +816,9 @@ function animate() {
   if (cinematicActive) {
     updateCinematic(now);
   } else if (cinematicState === CinematicState.INTERACTIVE) {
+    // The main camera's own controls run exactly as before,
+    // completely unaffected by street view — a tour plays in its own
+    // separate inset camera/window and never touches this.
     if (isLayoutTransitionActive()) {
       updateLayoutSystem(now);
     } else {
@@ -811,10 +826,19 @@ function animate() {
     }
   }
 
+  // Independently advance the street-view tour if one is playing —
+  // this only ever moves the separate street camera, never the main
+  // one above.
+  updateStreetView(now);
+
   updateCameraDebugOverlay();
 
   renderer.render(scene, camera);
   renderAxisGizmo();
+  // Drawn AFTER the main render so the inset window sits on top of
+  // (never instead of) the main view. No-ops when no street-view
+  // session is active.
+  renderStreetViewInset();
 }
 
 animate();

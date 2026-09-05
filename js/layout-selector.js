@@ -136,6 +136,31 @@ let currentLayoutKey = null;
 let pendingLayoutKey = null;
 
 // -----------------------------------------------------
+// _layoutChangeListeners — other standalone modules (e.g.
+// street-view.js) can register here via onLayoutChanged() to find out
+// which layout is currently active, without this file needing to
+// know anything about them.
+// -----------------------------------------------------
+const _layoutChangeListeners = [];
+
+// -----------------------------------------------------
+// onLayoutChanged — register a callback(key) fired every time a
+// layout transition finishes and currentLayoutKey settles on its new
+// value. Fired once per completed transition (not during it).
+// -----------------------------------------------------
+export function onLayoutChanged(callback) {
+  _layoutChangeListeners.push(callback);
+}
+
+// -----------------------------------------------------
+// getCurrentLayoutKey — the key of the layout the camera is currently
+// settled on, or null if none has been selected yet.
+// -----------------------------------------------------
+export function getCurrentLayoutKey() {
+  return currentLayoutKey;
+}
+
+// -----------------------------------------------------
 // isLayoutTransitionActive — call this from your render loop to
 // decide whether to run updateLayoutSystem() this frame instead of
 // your own controls.update().
@@ -246,6 +271,7 @@ export function updateLayoutSystem(nowSeconds) {
     pendingLayoutKey = null;
 
     updateLayoutUIHighlight();
+    _layoutChangeListeners.forEach(function (cb) { cb(currentLayoutKey); });
   }
 }
 
